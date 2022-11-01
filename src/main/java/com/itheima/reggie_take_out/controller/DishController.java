@@ -12,9 +12,11 @@ import com.itheima.reggie_take_out.service.DishService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @RestController
@@ -27,6 +29,8 @@ public class DishController {
     private CategoryService categoryService;
     @Autowired
     private DishFlavourService dishFlavourService;
+    @Autowired
+    private RedisTemplate redisTemplate;
     @PostMapping
     public R<String>save(@RequestBody DishDto dishDto){
            dishService.saveWithFlavor(dishDto);
@@ -72,17 +76,32 @@ public class DishController {
     @PutMapping
     public R<String>update(@RequestBody DishDto dishDto){
         dishService.updateWithFlavor(dishDto);
+        //清理缓存
+        String key = "dish"+dishDto.getCategoryId()+"_"+dishDto.getStatus();
+        redisTemplate.delete(key);
         return R.success("更新菜品成功！");
     }
     @GetMapping("/list")
     public R<List<Dish>>list(Dish dish){
+        List<Dish> list = null;
+        String dishId = "dish"+dish.getCategoryId()+"_"+dish.getStatus();
+        //从redis中获取数据
+         list = (List<Dish>) redisTemplate.opsForValue().get(dishId);
+         //如果存在，直接获取
+        if(list!=null){
+            return R.success(list);
+        }
+
+
         LambdaQueryWrapper<Dish> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.eq(dish.getCategoryId()!=null,Dish::getCategoryId,dish.getCategoryId());
         //添加排序条件
         queryWrapper.orderByAsc(Dish::getSort).orderByDesc(Dish::getUpdateTime);
         //查询状态是1的
         queryWrapper.eq(Dish::getStatus,1);
-        List<Dish> list = dishService.list(queryWrapper);
+        list = dishService.list(queryWrapper);
+        //如果不存在，则查完数据库后，再存到redis中
+        redisTemplate.opsForValue().set(dishId,list,1, TimeUnit.HOURS);
         return R.success(list);
     }
 
